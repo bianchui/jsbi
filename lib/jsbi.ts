@@ -59,7 +59,7 @@ function fromStringHex(string: string): JSBI | null {
   do {
     let part = 0;
     let bits = 0;
-    while (true) {
+    while (bits + bitsPerChar <= 30) {
       let d;
       if ((current - 48) >>> 0 < 10) {
         d = current - 48;
@@ -75,7 +75,6 @@ function fromStringHex(string: string): JSBI | null {
         break;
       }
       current = string.charCodeAt(cursor);
-      if (bits + bitsPerChar > 30) break;
     }
     parts.push(part);
     partsBits.push(bits);
@@ -89,18 +88,13 @@ function fromStringHex(string: string): JSBI | null {
     const partBits = partsBits[i];
     digit |= part << bitsInDigit;
     bitsInDigit += partBits;
-    if (bitsInDigit === 30) {
-      result[digitIndex++] = digit | 0;
-      bitsInDigit = 0;
-      digit = 0;
-    } else if (bitsInDigit > 30) {
+    if (bitsInDigit >= 30) {
       result[digitIndex++] = digit & 0x3fffffff;
       bitsInDigit -= 30;
       digit = part >>> (partBits - bitsInDigit);
     }
   }
   if (digit !== 0) {
-    if (digitIndex >= result.length) throw new Error('implementation bug');
     result[digitIndex++] = digit | 0;
   }
   for (; digitIndex < result.length; digitIndex++) {
