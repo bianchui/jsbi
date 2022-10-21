@@ -95,83 +95,33 @@ class JSBI extends Array {
     return c === 0xfeff;
   }
 
-  static __fromString(string: string, radix: number = 0): JSBI | null {
+  static __fromString(string: string): JSBI | null {
     let sign = 0;
-    let leadingZero = false;
     const length = string.length;
     let cursor = 0;
     if (cursor === length) return JSBI.__zero();
     let current = string.charCodeAt(cursor);
-    // Skip whitespace.
-    while (JSBI.__isWhitespace(current)) {
+    // not support whitespace.
+    if (current === 0x30) {
+      // '0'
+      // Allow "0x" prefix.
       if (++cursor === length) return JSBI.__zero();
       current = string.charCodeAt(cursor);
-    }
-
-    // Detect radix.
-    if (current === 0x2b) {
-      // '+'
-      if (++cursor === length) return null;
-      current = string.charCodeAt(cursor);
-      sign = 1;
-    } else if (current === 0x2d) {
-      // '-'
-      if (++cursor === length) return null;
-      current = string.charCodeAt(cursor);
-      sign = -1;
-    }
-
-    if (radix === 0) {
-      radix = 10;
-      if (current === 0x30) {
-        // '0'
-        if (++cursor === length) return JSBI.__zero();
+      if (current === 0x58 || current === 0x78) {
+        // 'X' or 'x'
+        if (++cursor === length) return null;
         current = string.charCodeAt(cursor);
-        if (current === 0x58 || current === 0x78) {
-          // 'X' or 'x'
-          radix = 16;
-          if (++cursor === length) return null;
-          current = string.charCodeAt(cursor);
-        } else if (current === 0x4f || current === 0x6f) {
-          // 'O' or 'o'
-          radix = 8;
-          if (++cursor === length) return null;
-          current = string.charCodeAt(cursor);
-        } else if (current === 0x42 || current === 0x62) {
-          // 'B' or 'b'
-          radix = 2;
-          if (++cursor === length) return null;
-          current = string.charCodeAt(cursor);
-        } else {
-          leadingZero = true;
-        }
-      }
-    } else if (radix === 16) {
-      if (current === 0x30) {
-        // '0'
-        // Allow "0x" prefix.
-        if (++cursor === length) return JSBI.__zero();
-        current = string.charCodeAt(cursor);
-        if (current === 0x58 || current === 0x78) {
-          // 'X' or 'x'
-          if (++cursor === length) return null;
-          current = string.charCodeAt(cursor);
-        } else {
-          leadingZero = true;
-        }
       }
     }
-    if (sign !== 0 && radix !== 10) return null;
     // Skip leading zeros.
     while (current === 0x30) {
-      leadingZero = true;
       if (++cursor === length) return JSBI.__zero();
       current = string.charCodeAt(cursor);
     }
 
     // Allocate result.
     const chars = length - cursor;
-    let bitsPerChar = JSBI.__kMaxBitsPerChar[radix];
+    let bitsPerChar = JSBI.__kMaxBitsPerChar16;
     let roundup = JSBI.__kBitsPerCharTableMultiplier - 1;
     if (chars > (1 << 30) / bitsPerChar) return null;
     const bitsMin = (bitsPerChar * chars + roundup) >>> JSBI.__kBitsPerCharTableShift;
@@ -179,53 +129,40 @@ class JSBI extends Array {
     const result = new JSBI(resultLength, false);
 
     // Parse.
-    const limDigit = radix < 10 ? radix : 10;
-    const limAlpha = radix > 10 ? radix - 10 : 0;
+    const limDigit = 10;
+    const limAlpha = 6;
 
-    if ((radix & (radix - 1)) === 0) {
-      // Power-of-two radix.
-      bitsPerChar >>= JSBI.__kBitsPerCharTableShift;
-      const parts = [];
-      const partsBits = [];
-      let done = false;
-      do {
-        let part = 0;
-        let bits = 0;
-        while (true) {
-          let d;
-          if ((current - 48) >>> 0 < limDigit) {
-            d = current - 48;
-          } else if (((current | 32) - 97) >>> 0 < limAlpha) {
-            d = (current | 32) - 87;
-          } else {
-            done = true;
-            break;
-          }
-          bits += bitsPerChar;
-          part = (part << bitsPerChar) | d;
-          if (++cursor === length) {
-            done = true;
-            break;
-          }
-          current = string.charCodeAt(cursor);
-          if (bits + bitsPerChar > 30) break;
+    // Power-of-two radix.
+    bitsPerChar >>= JSBI.__kBitsPerCharTableShift;
+    const parts = [];
+    const partsBits = [];
+    let done = false;
+    do {
+      let part = 0;
+      let bits = 0;
+      while (true) {
+        let d;
+        if ((current - 48) >>> 0 < limDigit) {
+          d = current - 48;
+        } else if (((current | 32) - 97) >>> 0 < limAlpha) {
+          d = (current | 32) - 87;
+        } else {
+          done = true;
+          break;
         }
-        parts.push(part);
-        partsBits.push(bits);
-      } while (!done);
-      JSBI.__fillFromParts(result, parts, partsBits);
-    } else {
-      return null;
-    }
-
-    if (cursor !== length) {
-      if (!JSBI.__isWhitespace(current)) return null;
-      for (cursor++; cursor < length; cursor++) {
+        bits += bitsPerChar;
+        part = (part << bitsPerChar) | d;
+        if (++cursor === length) {
+          done = true;
+          break;
+        }
         current = string.charCodeAt(cursor);
-        if (!JSBI.__isWhitespace(current)) return null;
+        if (bits + bitsPerChar > 30) break;
       }
-    }
-
+      parts.push(part);
+      partsBits.push(bits);
+    } while (!done);
+    JSBI.__fillFromParts(result, parts, partsBits);
     // Get result.
     result.sign = sign === -1;
     return result.__trim();
@@ -260,28 +197,11 @@ class JSBI extends Array {
   }
 
   // Digit helpers.
-  __digit(i: number): number {
-    return this[i];
-  }
-  __unsignedDigit(i: number): number {
-    return this[i] >>> 0;
-  }
   __setDigit(i: number, digit: number): void {
     this[i] = digit | 0;
   }
-  __halfDigitLength(): number {
-    const len = this.length;
-    if (this.__unsignedDigit(len - 1) <= 0x7fff) return len * 2 - 1;
-    return len * 2;
-  }
   __halfDigit(i: number): number {
     return (this[i >>> 1] >>> ((i & 1) * 15)) & 0x7fff;
-  }
-  __setHalfDigit(i: number, value: number): void {
-    const digitIndex = i >>> 1;
-    const previous = this.__digit(digitIndex);
-    const updated = i & 1 ? (previous & 0x7fff) | (value << 15) : (previous & 0x3fff8000) | (value & 0x7fff);
-    this.__setDigit(digitIndex, updated);
   }
 
   // Lookup table for the maximum number of bits required per character of a
@@ -291,57 +211,9 @@ class JSBI extends Array {
   // for (let i = 0; i <= 36; i++) {
   //   console.log(Math.ceil(Math.log2(i) * 32) + ',');
   // }
-  static __kMaxBitsPerChar = [
-    0,
-    0,
-    32,
-    51,
-    64,
-    75,
-    83,
-    90,
-    96, // 0..8
-    102,
-    107,
-    111,
-    115,
-    119,
-    122,
-    126,
-    128, // 9..16
-    131,
-    134,
-    136,
-    139,
-    141,
-    143,
-    145,
-    147, // 17..24
-    149,
-    151,
-    153,
-    154,
-    156,
-    158,
-    159,
-    160, // 25..32
-    162,
-    163,
-    165,
-    166, // 33..36
-  ];
-
+  static __kMaxBitsPerChar16 = 128;
   static __kBitsPerCharTableShift = 5;
   static __kBitsPerCharTableMultiplier = 1 << JSBI.__kBitsPerCharTableShift;
-
-  // For IE11 compatibility.
-  // Note that the custom replacements are tailored for JSBI's needs, and as
-  // such are not reusable as general-purpose polyfills.
-  static __imul =
-    Math.imul ||
-    function (a: number, b: number) {
-      return (a * b) | 0;
-    };
 }
 
 export default JSBI;
