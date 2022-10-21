@@ -159,14 +159,6 @@ class JSBI extends Array {
     return remainder.__trim();
   }
 
-  static greaterThan(x: JSBI, y: JSBI): boolean {
-    return JSBI.__compareToBigInt(x, y) > 0;
-  }
-
-  static greaterThanOrEqual(x: JSBI, y: JSBI): boolean {
-    return JSBI.__compareToBigInt(x, y) >= 0;
-  }
-
   static equal(x: JSBI, y: JSBI): boolean {
     if (x.sign !== y.sign) return false;
     if (x.length !== y.length) return false;
@@ -174,117 +166,6 @@ class JSBI extends Array {
       if (x.__digit(i) !== y.__digit(i)) return false;
     }
     return true;
-  }
-
-  static asIntN(n: number, x: JSBI): JSBI {
-    if (x.length === 0) return x;
-    n = Math.floor(n);
-    if (n < 0) {
-      throw new RangeError('Invalid value: not (convertible to) a safe integer');
-    }
-    if (n === 0) return JSBI.__zero();
-    // If {x} has less than {n} bits, return it directly.
-    if (n >= JSBI.__kMaxLengthBits) return x;
-    const neededLength = ((n + 29) / 30) | 0;
-    if (x.length < neededLength) return x;
-    const topDigit = x.__unsignedDigit(neededLength - 1);
-    const compareDigit = 1 << (n - 1) % 30;
-    if (x.length === neededLength && topDigit < compareDigit) return x;
-    // Otherwise truncate and simulate two's complement.
-    const hasBit = (topDigit & compareDigit) === compareDigit;
-    if (!hasBit) return JSBI.__truncateToNBits(n, x);
-    if (!x.sign) return JSBI.__truncateAndSubFromPowerOfTwo(n, x, true);
-    if ((topDigit & (compareDigit - 1)) === 0) {
-      for (let i = neededLength - 2; i >= 0; i--) {
-        if (x.__digit(i) !== 0) {
-          return JSBI.__truncateAndSubFromPowerOfTwo(n, x, false);
-        }
-      }
-      if (x.length === neededLength && topDigit === compareDigit) return x;
-      return JSBI.__truncateToNBits(n, x);
-    }
-    return JSBI.__truncateAndSubFromPowerOfTwo(n, x, false);
-  }
-
-  static asUintN(n: number, x: JSBI): JSBI {
-    if (x.length === 0) return x;
-    n = Math.floor(n);
-    if (n < 0) {
-      throw new RangeError('Invalid value: not (convertible to) a safe integer');
-    }
-    if (n === 0) return JSBI.__zero();
-    // If {x} is negative, simulate two's complement representation.
-    if (x.sign) {
-      if (n > JSBI.__kMaxLengthBits) {
-        throw new RangeError('BigInt too big');
-      }
-      return JSBI.__truncateAndSubFromPowerOfTwo(n, x, false);
-    }
-    // If {x} is positive and has up to {n} bits, return it directly.
-    if (n >= JSBI.__kMaxLengthBits) return x;
-    const neededLength = ((n + 29) / 30) | 0;
-    if (x.length < neededLength) return x;
-    const bitsInTopDigit = n % 30;
-    if (x.length == neededLength) {
-      if (bitsInTopDigit === 0) return x;
-      const topDigit = x.__digit(neededLength - 1);
-      if (topDigit >>> bitsInTopDigit === 0) return x;
-    }
-    // Otherwise, truncate.
-    return JSBI.__truncateToNBits(n, x);
-  }
-
-  // Operators.
-
-  static LT(x: any, y: any): boolean {
-    return JSBI.__compare(x, y, 0);
-  }
-  static LE(x: any, y: any): boolean {
-    return JSBI.__compare(x, y, 1);
-  }
-  static GT(x: any, y: any): boolean {
-    return JSBI.__compare(x, y, 2);
-  }
-  static GE(x: any, y: any): boolean {
-    return JSBI.__compare(x, y, 3);
-  }
-
-  static EQ(x: any, y: any): boolean {
-    while (true) {
-      if (JSBI.__isBigInt(x)) {
-        if (JSBI.__isBigInt(y)) return JSBI.equal(x, y);
-        return JSBI.EQ(y, x);
-      } else if (typeof x === 'number') {
-        if (JSBI.__isBigInt(y)) return JSBI.__equalToNumber(y, x);
-        if (typeof y !== 'object') return x == y;
-        y = JSBI.__toPrimitive(y);
-      } else if (typeof x === 'string') {
-        if (JSBI.__isBigInt(y)) {
-          x = JSBI.__fromString(x);
-          if (x === null) return false;
-          return JSBI.equal(x, y);
-        }
-        if (typeof y !== 'object') return x == y;
-        y = JSBI.__toPrimitive(y);
-      } else if (typeof x === 'boolean') {
-        if (JSBI.__isBigInt(y)) return JSBI.__equalToNumber(y, +x);
-        if (typeof y !== 'object') return x == y;
-        y = JSBI.__toPrimitive(y);
-      } else if (typeof x === 'symbol') {
-        if (JSBI.__isBigInt(y)) return false;
-        if (typeof y !== 'object') return x == y;
-        y = JSBI.__toPrimitive(y);
-      } else if (typeof x === 'object') {
-        if (typeof y === 'object' && y.constructor !== JSBI) return x == y;
-        x = JSBI.__toPrimitive(x);
-      } else {
-        return x == y;
-      }
-    }
-  }
-
-  static NE(x: any, y: any): boolean {
-    return !JSBI.EQ(x, y);
   }
 
   // Helpers.
@@ -621,35 +502,6 @@ class JSBI extends Array {
     return bothNegative ? 1 : -1;
   }
 
-  static __compareToBigInt(x: JSBI, y: JSBI): number {
-    const xSign = x.sign;
-    if (xSign !== y.sign) return JSBI.__unequalSign(xSign);
-    const result = JSBI.__absoluteCompare(x, y);
-    if (result > 0) return JSBI.__absoluteGreater(xSign);
-    if (result < 0) return JSBI.__absoluteLess(xSign);
-    return 0;
-  }
-
-  static __compareToNumber(x: JSBI, y: number): number {
-    if (JSBI.__isOneDigitInt(y)) {
-      const xSign = x.sign;
-      const ySign = y < 0;
-      if (xSign !== ySign) return JSBI.__unequalSign(xSign);
-      if (x.length === 0) {
-        if (ySign) throw new Error('implementation bug');
-        return y === 0 ? 0 : -1;
-      }
-      // Any multi-digit BigInt is bigger than an int32.
-      if (x.length > 1) return JSBI.__absoluteGreater(xSign);
-      const yAbs = Math.abs(y);
-      const xDigit = x.__unsignedDigit(0);
-      if (xDigit > yAbs) return JSBI.__absoluteGreater(xSign);
-      if (xDigit < yAbs) return JSBI.__absoluteLess(xSign);
-      return 0;
-    }
-    return JSBI.__compareToDouble(x, y);
-  }
-
   static __compareToDouble(x: JSBI, y: number): number {
     if (y !== y) return y; // NaN.
     if (y === Infinity) return -1;
@@ -743,76 +595,6 @@ class JSBI extends Array {
       return x.length === 1 && x.sign === y < 0 && x.__unsignedDigit(0) === Math.abs(y);
     }
     return JSBI.__compareToDouble(x, y) === 0;
-  }
-
-  // Comparison operations, chosen such that "op ^ 2" reverses direction:
-  // 0 - lessThan
-  // 1 - lessThanOrEqual
-  // 2 - greaterThan
-  // 3 - greaterThanOrEqual
-  static __comparisonResultToBool(result: number, op: 0 | 1 | 2 | 3) {
-    switch (op) {
-      case 0:
-        return result < 0;
-      case 1:
-        return result <= 0;
-      case 2:
-        return result > 0;
-      case 3:
-        return result >= 0;
-    }
-  }
-
-  static __compare(x: any, y: any, op: 0 | 1 | 2 | 3): boolean {
-    x = JSBI.__toPrimitive(x);
-    y = JSBI.__toPrimitive(y);
-    if (typeof x === 'string' && typeof y === 'string') {
-      switch (op) {
-        case 0:
-          return x < y;
-        case 1:
-          return x <= y;
-        case 2:
-          return x > y;
-        case 3:
-          return x >= y;
-      }
-    }
-    if (JSBI.__isBigInt(x) && typeof y === 'string') {
-      y = JSBI.__fromString(y);
-      if (y === null) return false;
-      return JSBI.__comparisonResultToBool(JSBI.__compareToBigInt(x, y), op);
-    }
-    if (typeof x === 'string' && JSBI.__isBigInt(y)) {
-      x = JSBI.__fromString(x);
-      if (x === null) return false;
-      return JSBI.__comparisonResultToBool(JSBI.__compareToBigInt(x, y), op);
-    }
-    x = JSBI.__toNumeric(x);
-    y = JSBI.__toNumeric(y);
-    if (JSBI.__isBigInt(x)) {
-      if (JSBI.__isBigInt(y)) {
-        return JSBI.__comparisonResultToBool(JSBI.__compareToBigInt(x, y), op);
-      }
-      if (typeof y !== 'number') throw new Error('implementation bug');
-      return JSBI.__comparisonResultToBool(JSBI.__compareToNumber(x, y), op);
-    }
-    if (typeof x !== 'number') throw new Error('implementation bug');
-    if (JSBI.__isBigInt(y)) {
-      // Note that "op ^ 2" reverses the op's direction.
-      return JSBI.__comparisonResultToBool(JSBI.__compareToNumber(y, x), (op ^ 2) as 0 | 1 | 2 | 3);
-    }
-    if (typeof y !== 'number') throw new Error('implementation bug');
-    switch (op) {
-      case 0:
-        return x < y;
-      case 1:
-        return x <= y;
-      case 2:
-        return x > y;
-      case 3:
-        return x >= y;
-    }
   }
 
   __clzmsd(): number {
@@ -1109,38 +891,6 @@ class JSBI extends Array {
     return result;
   }
 
-  static __leftShiftByAbsolute(x: JSBI, y: JSBI): JSBI {
-    const shift = JSBI.__toShiftAmount(y);
-    if (shift < 0) throw new RangeError('BigInt too big');
-    const digitShift = (shift / 30) | 0;
-    const bitsShift = shift % 30;
-    const length = x.length;
-    const grow = bitsShift !== 0 && x.__digit(length - 1) >>> (30 - bitsShift) !== 0;
-    const resultLength = length + digitShift + (grow ? 1 : 0);
-    const result = new JSBI(resultLength, x.sign);
-    if (bitsShift === 0) {
-      let i = 0;
-      for (; i < digitShift; i++) result.__setDigit(i, 0);
-      for (; i < resultLength; i++) {
-        result.__setDigit(i, x.__digit(i - digitShift));
-      }
-    } else {
-      let carry = 0;
-      for (let i = 0; i < digitShift; i++) result.__setDigit(i, 0);
-      for (let i = 0; i < length; i++) {
-        const d = x.__digit(i);
-        result.__setDigit(i + digitShift, ((d << bitsShift) & 0x3fffffff) | carry);
-        carry = d >>> (30 - bitsShift);
-      }
-      if (grow) {
-        result.__setDigit(length + digitShift, carry);
-      } else {
-        if (carry !== 0) throw new Error('implementation bug');
-      }
-    }
-    return result.__trim();
-  }
-
   static __toShiftAmount(x: JSBI): number {
     if (x.length > 1) return -1;
     const value = x.__unsignedDigit(0);
@@ -1181,54 +931,6 @@ class JSBI extends Array {
     return typeof value === 'object' && value !== null && value.constructor === JSBI;
   }
 
-  static __truncateToNBits(n: number, x: JSBI): JSBI {
-    const neededDigits = ((n + 29) / 30) | 0;
-    const result = new JSBI(neededDigits, x.sign);
-    const last = neededDigits - 1;
-    for (let i = 0; i < last; i++) {
-      result.__setDigit(i, x.__digit(i));
-    }
-    let msd = x.__digit(last);
-    if (n % 30 !== 0) {
-      const drop = 32 - (n % 30);
-      msd = (msd << drop) >>> drop;
-    }
-    result.__setDigit(last, msd);
-    return result.__trim();
-  }
-
-  static __truncateAndSubFromPowerOfTwo(n: number, x: JSBI, resultSign: boolean): JSBI {
-    const neededDigits = ((n + 29) / 30) | 0;
-    const result = new JSBI(neededDigits, resultSign);
-    let i = 0;
-    const last = neededDigits - 1;
-    let borrow = 0;
-    const limit = Math.min(last, x.length);
-    for (; i < limit; i++) {
-      const r = 0 - x.__digit(i) - borrow;
-      borrow = (r >>> 30) & 1;
-      result.__setDigit(i, r & 0x3fffffff);
-    }
-    for (; i < last; i++) {
-      result.__setDigit(i, (-borrow & 0x3fffffff) | 0);
-    }
-    let msd = last < x.length ? x.__digit(last) : 0;
-    const msdBitsConsumed = n % 30;
-    let resultMsd;
-    if (msdBitsConsumed === 0) {
-      resultMsd = 0 - msd - borrow;
-      resultMsd &= 0x3fffffff;
-    } else {
-      const drop = 32 - msdBitsConsumed;
-      msd = (msd << drop) >>> drop;
-      const minuendMsd = 1 << (32 - drop);
-      resultMsd = minuendMsd - msd - borrow;
-      resultMsd &= minuendMsd - 1;
-    }
-    result.__setDigit(last, resultMsd);
-    return result.__trim();
-  }
-
   // Digit helpers.
   __digit(i: number): number {
     return this[i];
@@ -1237,9 +939,6 @@ class JSBI extends Array {
     return this[i] >>> 0;
   }
   __setDigit(i: number, digit: number): void {
-    this[i] = digit | 0;
-  }
-  __setDigitGrow(i: number, digit: number): void {
     this[i] = digit | 0;
   }
   __halfDigitLength(): number {
@@ -1255,16 +954,6 @@ class JSBI extends Array {
     const previous = this.__digit(digitIndex);
     const updated = i & 1 ? (previous & 0x7fff) | (value << 15) : (previous & 0x3fff8000) | (value & 0x7fff);
     this.__setDigit(digitIndex, updated);
-  }
-
-  static __digitPow(base: number, exponent: number) {
-    let result = 1;
-    while (exponent > 0) {
-      if (exponent & 1) result *= base;
-      exponent >>>= 1;
-      base *= base;
-    }
-    return result;
   }
 
   static __kMaxLength = 1 << 25;
