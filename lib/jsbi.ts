@@ -132,14 +132,14 @@ class JSBI extends Array {
     const resultSign = x.sign !== y.sign;
     const divisor = y.__unsignedDigit(0);
     let quotient;
-    if (y.length === 1 && divisor <= 0x7fff) {
+    /*if (y.length === 1 && divisor <= 0x7fff)*/ {
       if (divisor === 1) {
         return resultSign === x.sign ? x : JSBI.unaryMinus(x);
       }
       quotient = JSBI.__absoluteDivSmall(x, divisor, null);
-    } else {
-      quotient = JSBI.__absoluteDivLarge(x, y, true, false);
-    }
+    } //else {
+    //  quotient = JSBI.__absoluteDivLarge(x, y, true, false);
+    //}
     quotient.sign = resultSign;
     return quotient.__trim();
   }
@@ -148,15 +148,15 @@ class JSBI extends Array {
     if (y.length === 0) throw new RangeError('Division by zero');
     if (JSBI.__absoluteCompare(x, y) < 0) return x;
     const divisor = y.__unsignedDigit(0);
-    if (y.length === 1 && divisor <= 0x7fff) {
+    /*if (y.length === 1 && divisor <= 0x7fff)*/ {
       if (divisor === 1) return JSBI.__zero();
       const remainderDigit = JSBI.__absoluteModSmall(x, divisor);
       if (remainderDigit === 0) return JSBI.__zero();
       return JSBI.__oneDigit(remainderDigit, x.sign);
     }
-    const remainder = JSBI.__absoluteDivLarge(x, y, false, true);
-    remainder.sign = x.sign;
-    return remainder.__trim();
+    //const remainder = JSBI.__absoluteDivLarge(x, y, false, true);
+    //remainder.sign = x.sign;
+    //return remainder.__trim();
   }
 
   static equal(x: JSBI, y: JSBI): boolean {
@@ -710,192 +710,8 @@ class JSBI extends Array {
     return remainder;
   }
 
-  static __absoluteDivLarge(dividend: JSBI, divisor: JSBI, wantQuotient: false, wantRemainder: false): undefined;
-  static __absoluteDivLarge(dividend: JSBI, divisor: JSBI, wantQuotient: true, wantRemainder: true): { quotient: JSBI; remainder: JSBI };
-  static __absoluteDivLarge(dividend: JSBI, divisor: JSBI, wantQuotient: boolean, wantRemainder: boolean): JSBI;
-  static __absoluteDivLarge(
-    dividend: JSBI,
-    divisor: JSBI,
-    wantQuotient: boolean,
-    wantRemainder: boolean
-  ): { quotient: JSBI; remainder: JSBI } | JSBI | undefined {
-    const n = divisor.__halfDigitLength();
-    const n2 = divisor.length;
-    const m = dividend.__halfDigitLength() - n;
-    let q = null;
-    if (wantQuotient) {
-      q = new JSBI((m + 2) >>> 1, false);
-      q.__initializeDigits();
-    }
-    const qhatv = new JSBI((n + 2) >>> 1, false);
-    qhatv.__initializeDigits();
-    // D1.
-    const shift = JSBI.__clz15(divisor.__halfDigit(n - 1));
-    if (shift > 0) {
-      divisor = JSBI.__specialLeftShift(divisor, shift, 0 /* add no digits*/);
-    }
-    const u = JSBI.__specialLeftShift(dividend, shift, 1 /* add one digit */);
-    // D2.
-    const vn1 = divisor.__halfDigit(n - 1);
-    let halfDigitBuffer = 0;
-    for (let j = m; j >= 0; j--) {
-      // D3.
-      let qhat = 0x7fff;
-      const ujn = u.__halfDigit(j + n);
-      if (ujn !== vn1) {
-        const input = ((ujn << 15) | u.__halfDigit(j + n - 1)) >>> 0;
-        qhat = (input / vn1) | 0;
-        let rhat = input % vn1 | 0;
-        const vn2 = divisor.__halfDigit(n - 2);
-        const ujn2 = u.__halfDigit(j + n - 2);
-        while (JSBI.__imul(qhat, vn2) >>> 0 > ((rhat << 16) | ujn2) >>> 0) {
-          qhat--;
-          rhat += vn1;
-          if (rhat > 0x7fff) break;
-        }
-      }
-      // D4.
-      JSBI.__internalMultiplyAdd(divisor, qhat, 0, n2, qhatv);
-      let c = u.__inplaceSub(qhatv, j, n + 1);
-      if (c !== 0) {
-        c = u.__inplaceAdd(divisor, j, n);
-        u.__setHalfDigit(j + n, (u.__halfDigit(j + n) + c) & 0x7fff);
-        qhat--;
-      }
-      if (wantQuotient) {
-        if (j & 1) {
-          halfDigitBuffer = qhat << 15;
-        } else {
-          // TODO make this statically determinable
-          (q as JSBI).__setDigit(j >>> 1, halfDigitBuffer | qhat);
-        }
-      }
-    }
-    if (wantRemainder) {
-      u.__inplaceRightShift(shift);
-      if (wantQuotient) {
-        return { quotient: q as JSBI, remainder: u };
-      }
-      return u;
-    }
-    if (wantQuotient) return q as JSBI;
-    // TODO find a way to make this statically unreachable?
-    throw new Error('unreachable');
-  }
-
   static __clz15(value: number): number {
     return JSBI.__clz30(value) - 15;
-  }
-
-  // TODO: work on full digits, like __inplaceSub?
-  __inplaceAdd(summand: JSBI, startIndex: number, halfDigits: number): number {
-    let carry = 0;
-    for (let i = 0; i < halfDigits; i++) {
-      const sum = this.__halfDigit(startIndex + i) + summand.__halfDigit(i) + carry;
-      carry = sum >>> 15;
-      this.__setHalfDigit(startIndex + i, sum & 0x7fff);
-    }
-    return carry;
-  }
-
-  __inplaceSub(subtrahend: JSBI, startIndex: number, halfDigits: number): number {
-    const fullSteps = (halfDigits - 1) >>> 1;
-    let borrow = 0;
-    if (startIndex & 1) {
-      // this:   [..][..][..]
-      // subtr.:   [..][..]
-      startIndex >>= 1;
-      let current = this.__digit(startIndex);
-      let r0 = current & 0x7fff;
-      let i = 0;
-      for (; i < fullSteps; i++) {
-        const sub = subtrahend.__digit(i);
-        const r15 = (current >>> 15) - (sub & 0x7fff) - borrow;
-        borrow = (r15 >>> 15) & 1;
-        this.__setDigit(startIndex + i, ((r15 & 0x7fff) << 15) | (r0 & 0x7fff));
-        current = this.__digit(startIndex + i + 1);
-        r0 = (current & 0x7fff) - (sub >>> 15) - borrow;
-        borrow = (r0 >>> 15) & 1;
-      }
-      // Unrolling the last iteration gives a 5% performance benefit!
-      const sub = subtrahend.__digit(i);
-      const r15 = (current >>> 15) - (sub & 0x7fff) - borrow;
-      borrow = (r15 >>> 15) & 1;
-      this.__setDigit(startIndex + i, ((r15 & 0x7fff) << 15) | (r0 & 0x7fff));
-      const subTop = sub >>> 15;
-      if (startIndex + i + 1 >= this.length) {
-        throw new RangeError('out of bounds');
-      }
-      if ((halfDigits & 1) === 0) {
-        current = this.__digit(startIndex + i + 1);
-        r0 = (current & 0x7fff) - subTop - borrow;
-        borrow = (r0 >>> 15) & 1;
-        this.__setDigit(startIndex + subtrahend.length, (current & 0x3fff8000) | (r0 & 0x7fff));
-      }
-    } else {
-      startIndex >>= 1;
-      let i = 0;
-      for (; i < subtrahend.length - 1; i++) {
-        const current = this.__digit(startIndex + i);
-        const sub = subtrahend.__digit(i);
-        const r0 = (current & 0x7fff) - (sub & 0x7fff) - borrow;
-        borrow = (r0 >>> 15) & 1;
-        const r15 = (current >>> 15) - (sub >>> 15) - borrow;
-        borrow = (r15 >>> 15) & 1;
-        this.__setDigit(startIndex + i, ((r15 & 0x7fff) << 15) | (r0 & 0x7fff));
-      }
-      const current = this.__digit(startIndex + i);
-      const sub = subtrahend.__digit(i);
-      const r0 = (current & 0x7fff) - (sub & 0x7fff) - borrow;
-      borrow = (r0 >>> 15) & 1;
-      let r15 = 0;
-      if ((halfDigits & 1) === 0) {
-        r15 = (current >>> 15) - (sub >>> 15) - borrow;
-        borrow = (r15 >>> 15) & 1;
-      }
-      this.__setDigit(startIndex + i, ((r15 & 0x7fff) << 15) | (r0 & 0x7fff));
-    }
-    return borrow;
-  }
-
-  __inplaceRightShift(shift: number): void {
-    if (shift === 0) return;
-    let carry = this.__digit(0) >>> shift;
-    const last = this.length - 1;
-    for (let i = 0; i < last; i++) {
-      const d = this.__digit(i + 1);
-      this.__setDigit(i, ((d << (30 - shift)) & 0x3fffffff) | carry);
-      carry = d >>> shift;
-    }
-    this.__setDigit(last, carry);
-  }
-
-  static __specialLeftShift(x: JSBI, shift: number, addDigit: 0 | 1): JSBI {
-    const n = x.length;
-    const resultLength = n + addDigit;
-    const result = new JSBI(resultLength, false);
-    if (shift === 0) {
-      for (let i = 0; i < n; i++) result.__setDigit(i, x.__digit(i));
-      if (addDigit > 0) result.__setDigit(n, 0);
-      return result;
-    }
-    let carry = 0;
-    for (let i = 0; i < n; i++) {
-      const d = x.__digit(i);
-      result.__setDigit(i, ((d << shift) & 0x3fffffff) | carry);
-      carry = d >>> (30 - shift);
-    }
-    if (addDigit > 0) {
-      result.__setDigit(n, carry);
-    }
-    return result;
-  }
-
-  static __toShiftAmount(x: JSBI): number {
-    if (x.length > 1) return -1;
-    const value = x.__unsignedDigit(0);
-    if (value > JSBI.__kMaxLengthBits) return -1;
-    return value;
   }
 
   static __toPrimitive(obj: any, hint = 'default'): any {
@@ -920,15 +736,6 @@ class JSBI extends Array {
       if (typeof primitive !== 'object') return primitive;
     }
     throw new TypeError('Cannot convert object to primitive value');
-  }
-
-  static __toNumeric(value: unknown): number | JSBI {
-    if (JSBI.__isBigInt(value)) return value;
-    return +(value as any);
-  }
-
-  static __isBigInt(value: unknown): value is JSBI {
-    return typeof value === 'object' && value !== null && value.constructor === JSBI;
   }
 
   // Digit helpers.
