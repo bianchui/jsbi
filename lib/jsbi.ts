@@ -31,10 +31,6 @@ class JSBI extends Array {
         }
         return JSBI.__oneDigit(arg, false);
       }
-      if (!Number.isFinite(arg) || Math.floor(arg) !== arg) {
-        throw new RangeError('The number ' + arg + ' cannot be converted to ' + 'BigInt because it is not an integer');
-      }
-      return JSBI.__fromDouble(arg);
     } else if (typeof arg === 'string') {
       const result = JSBI.__fromString(arg);
       if (result === null) {
@@ -169,59 +165,6 @@ class JSBI extends Array {
       if (x.__digit(digitIndex) !== 0) return 1;
     }
     return 0;
-  }
-
-  static __fromDouble(value: number): JSBI {
-    const sign = value < 0;
-    JSBI.__kBitConversionDouble[0] = value;
-    const rawExponent = (JSBI.__kBitConversionInts[1] >>> 20) & 0x7ff;
-    const exponent = rawExponent - 0x3ff;
-    const digits = ((exponent / 30) | 0) + 1;
-    const result = new JSBI(digits, sign);
-    const kHiddenBit = 0x00100000;
-    let mantissaHigh = (JSBI.__kBitConversionInts[1] & 0xfffff) | kHiddenBit;
-    let mantissaLow = JSBI.__kBitConversionInts[0];
-    const kMantissaHighTopBit = 20;
-    // 0-indexed position of most significant bit in most significant digit.
-    const msdTopBit = exponent % 30;
-    // Number of unused bits in the mantissa. We'll keep them shifted to the
-    // left (i.e. most significant part).
-    let remainingMantissaBits = 0;
-    // Next digit under construction.
-    let digit;
-    // First, build the MSD by shifting the mantissa appropriately.
-    if (msdTopBit < kMantissaHighTopBit) {
-      const shift = kMantissaHighTopBit - msdTopBit;
-      remainingMantissaBits = shift + 32;
-      digit = mantissaHigh >>> shift;
-      mantissaHigh = (mantissaHigh << (32 - shift)) | (mantissaLow >>> shift);
-      mantissaLow = mantissaLow << (32 - shift);
-    } else if (msdTopBit === kMantissaHighTopBit) {
-      remainingMantissaBits = 32;
-      digit = mantissaHigh;
-      mantissaHigh = mantissaLow;
-      mantissaLow = 0;
-    } else {
-      const shift = msdTopBit - kMantissaHighTopBit;
-      remainingMantissaBits = 32 - shift;
-      digit = (mantissaHigh << shift) | (mantissaLow >>> (32 - shift));
-      mantissaHigh = mantissaLow << shift;
-      mantissaLow = 0;
-    }
-    result.__setDigit(digits - 1, digit);
-    // Then fill in the rest of the digits.
-    for (let digitIndex = digits - 2; digitIndex >= 0; digitIndex--) {
-      if (remainingMantissaBits > 0) {
-        remainingMantissaBits -= 30;
-        digit = mantissaHigh >>> 2;
-        mantissaHigh = (mantissaHigh << 30) | (mantissaLow >>> 2);
-        mantissaLow = mantissaLow << 30;
-      } else {
-        digit = 0;
-      }
-      result.__setDigit(digitIndex, digit);
-    }
-    return result.__trim();
   }
 
   static __isWhitespace(c: number): boolean {
@@ -432,37 +375,6 @@ class JSBI extends Array {
     }
   }
 
-  __clzmsd(): number {
-    return JSBI.__clz30(this.__digit(this.length - 1));
-  }
-
-  static __absoluteAdd(x: JSBI, y: JSBI, resultSign: boolean): JSBI {
-    if (x.length < y.length) return JSBI.__absoluteAdd(y, x, resultSign);
-    if (x.length === 0) return x;
-    if (y.length === 0) return x.sign === resultSign ? x : JSBI.unaryMinus(x);
-    let resultLength = x.length;
-    if (x.__clzmsd() === 0 || (y.length === x.length && y.__clzmsd() === 0)) {
-      resultLength++;
-    }
-    const result = new JSBI(resultLength, resultSign);
-    let carry = 0;
-    let i = 0;
-    for (; i < y.length; i++) {
-      const r = x.__digit(i) + y.__digit(i) + carry;
-      carry = r >>> 30;
-      result.__setDigit(i, r & 0x3fffffff);
-    }
-    for (; i < x.length; i++) {
-      const r = x.__digit(i) + carry;
-      carry = r >>> 30;
-      result.__setDigit(i, r & 0x3fffffff);
-    }
-    if (i < result.length) {
-      result.__setDigit(i, carry);
-    }
-    return result.__trim();
-  }
-
   static __absoluteCompare(x: JSBI, y: JSBI) {
     const diff = x.length - y.length;
     if (diff !== 0) return diff;
@@ -521,30 +433,6 @@ class JSBI extends Array {
       remainder = input % divisor | 0;
     }
     return remainder;
-  }
-
-  static __toPrimitive(obj: any, hint = 'default'): any {
-    if (typeof obj !== 'object') return obj;
-    if (obj.constructor === JSBI) return obj;
-    if (typeof Symbol !== 'undefined' && typeof Symbol.toPrimitive === 'symbol') {
-      const exoticToPrim = obj[Symbol.toPrimitive];
-      if (exoticToPrim) {
-        const primitive = exoticToPrim(hint);
-        if (typeof primitive !== 'object') return primitive;
-        throw new TypeError('Cannot convert object to primitive value');
-      }
-    }
-    const valueOf = obj.valueOf;
-    if (valueOf) {
-      const primitive = valueOf.call(obj);
-      if (typeof primitive !== 'object') return primitive;
-    }
-    const toString = obj.toString;
-    if (toString) {
-      const primitive = toString.call(obj);
-      if (typeof primitive !== 'object') return primitive;
-    }
-    throw new TypeError('Cannot convert object to primitive value');
   }
 
   // Digit helpers.
