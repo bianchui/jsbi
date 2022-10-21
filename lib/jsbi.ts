@@ -22,86 +22,32 @@ class JSBI extends Array {
     }
   }
 
-  static BigInt(arg: number | string | boolean | object): JSBI {
-    if (typeof arg === 'number') {
-      if (arg === 0) return JSBI.__zero();
-      if (JSBI.__isOneDigitInt(arg)) {
-        if (arg < 0) {
-          return JSBI.__oneDigit(-arg, true);
-        }
-        return JSBI.__oneDigit(arg, false);
-      }
-    } else if (typeof arg === 'string') {
+  static BigInt(arg: string): JSBI {
+    if (typeof arg === 'string') {
       const result = JSBI.__fromString(arg);
-      if (result === null) {
-        throw new SyntaxError('Cannot convert ' + arg + ' to a BigInt');
+      if (result) {
+        return result;
       }
-      return result;
     }
     throw new TypeError('Cannot convert ' + arg + ' to a BigInt');
   }
 
-  // Equivalent of "Number(my_bigint)" in the native implementation.
-  // TODO: add more tests
-  static toNumber(x: JSBI): number {
-    const xLength = x.length;
-    if (xLength === 0) return 0;
-    if (xLength === 1) {
-      const value = x.__unsignedDigit(0);
-      return x.sign ? -value : value;
-    }
-    throw new TypeError('Cannot convert ' + x + ' to a Number');
-  }
-
   // Operations.
 
-  static unaryMinus(x: JSBI): JSBI {
-    if (x.length === 0) return x;
-    const result = x.__copy();
-    result.sign = !x.sign;
-    return result;
-  }
-
-  static divide(x: JSBI, y: JSBI): JSBI {
-    if (y.length === 0) throw new RangeError('Division by zero');
-    if (JSBI.__absoluteCompare(x, y) < 0) return JSBI.__zero();
-    const resultSign = x.sign !== y.sign;
-    const divisor = y.__unsignedDigit(0);
-    let quotient;
-    /*if (y.length === 1 && divisor <= 0x7fff)*/ {
-      if (divisor === 1) {
-        return resultSign === x.sign ? x : JSBI.unaryMinus(x);
-      }
-      quotient = JSBI.__absoluteDivSmall(x, divisor, null);
-    } //else {
-    //  quotient = JSBI.__absoluteDivLarge(x, y, true, false);
-    //}
-    quotient.sign = resultSign;
+  static div(x: JSBI, y: number): JSBI {
+    if (y <= 0) throw new RangeError('Division by zero');
+    let quotient = JSBI.__absoluteDivSmall(x, y, null);
+    quotient.sign = x.sign;
     return quotient.__trim();
   }
 
-  static remainder(x: JSBI, y: JSBI): JSBI {
-    if (y.length === 0) throw new RangeError('Division by zero');
-    if (JSBI.__absoluteCompare(x, y) < 0) return x;
-    const divisor = y.__unsignedDigit(0);
-    /*if (y.length === 1 && divisor <= 0x7fff)*/ {
-      if (divisor === 1) return JSBI.__zero();
-      const remainderDigit = JSBI.__absoluteModSmall(x, divisor);
-      if (remainderDigit === 0) return JSBI.__zero();
-      return JSBI.__oneDigit(remainderDigit, x.sign);
-    }
-    //const remainder = JSBI.__absoluteDivLarge(x, y, false, true);
-    //remainder.sign = x.sign;
-    //return remainder.__trim();
+  static mod(x: JSBI, y: number): number {
+    if (y <= 0) throw new RangeError('Division by zero');
+    return JSBI.__absoluteModSmall(x, y);
   }
 
-  static equal(x: JSBI, y: JSBI): boolean {
-    if (x.sign !== y.sign) return false;
-    if (x.length !== y.length) return false;
-    for (let i = 0; i < x.length; i++) {
-      if (x.__digit(i) !== y.__digit(i)) return false;
-    }
-    return true;
+  static is(x: JSBI): boolean {
+    return x.length != 0;
   }
 
   // Helpers.
@@ -461,7 +407,6 @@ class JSBI extends Array {
   }
 
   static __kMaxLength = 1 << 25;
-  static __kMaxLengthBits = JSBI.__kMaxLength << 5;
   // Lookup table for the maximum number of bits required per character of a
   // base-N string representation of a number. To increase accuracy, the array
   // value is the actual value multiplied by 32. To generate this table:
@@ -511,30 +456,15 @@ class JSBI extends Array {
 
   static __kBitsPerCharTableShift = 5;
   static __kBitsPerCharTableMultiplier = 1 << JSBI.__kBitsPerCharTableShift;
-  static __kConversionChars = '0123456789abcdefghijklmnopqrstuvwxyz'.split('');
-  static __kBitConversionBuffer = new ArrayBuffer(8);
-  static __kBitConversionDouble = new Float64Array(JSBI.__kBitConversionBuffer);
-  static __kBitConversionInts = new Int32Array(JSBI.__kBitConversionBuffer);
 
   // For IE11 compatibility.
   // Note that the custom replacements are tailored for JSBI's needs, and as
   // such are not reusable as general-purpose polyfills.
-  static __clz30 = Math.clz32
-    ? function (x: number): number {
-        return Math.clz32(x) - 2;
-      }
-    : function (x: number) {
-        if (x === 0) return 30;
-        return (29 - ((Math.log(x >>> 0) / Math.LN2) | 0)) | 0;
-      };
   static __imul =
     Math.imul ||
     function (a: number, b: number) {
       return (a * b) | 0;
     };
-  static __isOneDigitInt(x: number) {
-    return (x & 0x3fffffff) === x;
-  }
 }
 
 export default JSBI;
