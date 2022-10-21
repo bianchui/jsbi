@@ -12,7 +12,7 @@
 // limitations under the License.
 
 class JSBI extends Array {
-  private constructor(length: number, private sign: boolean) {
+  private constructor(length: number) {
     super(length);
     // Explicitly set the prototype as per
     // https://github.com/Microsoft/TypeScript-wiki/blob/main/Breaking-Changes.md#extending-built-ins-like-error-array-and-map-may-no-longer-work
@@ -21,7 +21,7 @@ class JSBI extends Array {
 
   static BigInt(arg: string): JSBI {
     if (typeof arg === 'string') {
-      const result = JSBI.__fromString(arg);
+      const result = JSBI.__fromStringHex(arg);
       if (result) {
         return result;
       }
@@ -34,7 +34,7 @@ class JSBI extends Array {
   static div(x: JSBI, y: number): JSBI {
     y = ~~y;
     if (y <= 0) throw new RangeError('Division by zero');
-    let quotient = new JSBI(x.length, false);
+    let quotient = new JSBI(x.length);
     let remainder = 0;
     for (let i = x.length * 2 - 1; i >= 0; i -= 2) {
       let input = ((remainder << 15) | x.__halfDigit(i)) >>> 0;
@@ -43,9 +43,8 @@ class JSBI extends Array {
       input = ((remainder << 15) | x.__halfDigit(i - 1)) >>> 0;
       const lowerHalf = (input / y) | 0;
       remainder = input % y | 0;
-      quotient.__setDigit(i >>> 1, (upperHalf << 15) | lowerHalf);
+      quotient[i >>> 1] = (upperHalf << 15) | lowerHalf;
     }
-    quotient.sign = x.sign;
     return quotient.__trim();
   }
 
@@ -67,7 +66,7 @@ class JSBI extends Array {
   // Helpers.
 
   static __zero(): JSBI {
-    return new JSBI(0, false);
+    return new JSBI(0);
   }
 
   __trim(): this {
@@ -78,25 +77,10 @@ class JSBI extends Array {
       last = this[newLength - 1];
       this.pop();
     }
-    if (newLength === 0) this.sign = false;
     return this;
   }
 
-  static __isWhitespace(c: number): boolean {
-    if (c <= 0x0d && c >= 0x09) return true;
-    if (c <= 0x9f) return c === 0x20;
-    if (c <= 0x01ffff) {
-      return c === 0xa0 || c === 0x1680;
-    }
-    if (c <= 0x02ffff) {
-      c &= 0x01ffff;
-      return c <= 0x0a || c === 0x28 || c === 0x29 || c === 0x2f || c === 0x5f || c === 0x1000;
-    }
-    return c === 0xfeff;
-  }
-
-  static __fromString(string: string): JSBI | null {
-    let sign = 0;
+  static __fromStringHex(string: string): JSBI | null {
     const length = string.length;
     let cursor = 0;
     if (cursor === length) return JSBI.__zero();
@@ -121,19 +105,12 @@ class JSBI extends Array {
 
     // Allocate result.
     const chars = length - cursor;
-    let bitsPerChar = JSBI.__kMaxBitsPerChar16;
-    let roundup = JSBI.__kBitsPerCharTableMultiplier - 1;
-    if (chars > (1 << 30) / bitsPerChar) return null;
-    const bitsMin = (bitsPerChar * chars + roundup) >>> JSBI.__kBitsPerCharTableShift;
+    let bitsPerChar = 4;
+    const bitsMin = bitsPerChar * chars;
     const resultLength = ((bitsMin + 29) / 30) | 0;
-    const result = new JSBI(resultLength, false);
+    const result = new JSBI(resultLength);
 
     // Parse.
-    const limDigit = 10;
-    const limAlpha = 6;
-
-    // Power-of-two radix.
-    bitsPerChar >>= JSBI.__kBitsPerCharTableShift;
     const parts = [];
     const partsBits = [];
     let done = false;
@@ -142,9 +119,9 @@ class JSBI extends Array {
       let bits = 0;
       while (true) {
         let d;
-        if ((current - 48) >>> 0 < limDigit) {
+        if ((current - 48) >>> 0 < 10) {
           d = current - 48;
-        } else if (((current | 32) - 97) >>> 0 < limAlpha) {
+        } else if (((current | 32) - 97) >>> 0 < 6) {
           d = (current | 32) - 87;
         } else {
           done = true;
@@ -162,13 +139,7 @@ class JSBI extends Array {
       parts.push(part);
       partsBits.push(bits);
     } while (!done);
-    JSBI.__fillFromParts(result, parts, partsBits);
-    // Get result.
-    result.sign = sign === -1;
-    return result.__trim();
-  }
 
-  static __fillFromParts(result: JSBI, parts: number[], partsBits: number[]): void {
     let digitIndex = 0;
     let digit = 0;
     let bitsInDigit = 0;
@@ -178,42 +149,30 @@ class JSBI extends Array {
       digit |= part << bitsInDigit;
       bitsInDigit += partBits;
       if (bitsInDigit === 30) {
-        result.__setDigit(digitIndex++, digit);
+        result[digitIndex++] = digit | 0;
         bitsInDigit = 0;
         digit = 0;
       } else if (bitsInDigit > 30) {
-        result.__setDigit(digitIndex++, digit & 0x3fffffff);
+        result[digitIndex++] = digit & 0x3fffffff;
         bitsInDigit -= 30;
         digit = part >>> (partBits - bitsInDigit);
       }
     }
     if (digit !== 0) {
       if (digitIndex >= result.length) throw new Error('implementation bug');
-      result.__setDigit(digitIndex++, digit);
+      result[digitIndex++] = digit | 0;
     }
     for (; digitIndex < result.length; digitIndex++) {
-      result.__setDigit(digitIndex, 0);
+      result[digitIndex] = 0;
     }
+    // Get result.
+    return result.__trim();
   }
 
   // Digit helpers.
-  __setDigit(i: number, digit: number): void {
-    this[i] = digit | 0;
-  }
   __halfDigit(i: number): number {
     return (this[i >>> 1] >>> ((i & 1) * 15)) & 0x7fff;
   }
-
-  // Lookup table for the maximum number of bits required per character of a
-  // base-N string representation of a number. To increase accuracy, the array
-  // value is the actual value multiplied by 32. To generate this table:
-  //
-  // for (let i = 0; i <= 36; i++) {
-  //   console.log(Math.ceil(Math.log2(i) * 32) + ',');
-  // }
-  static __kMaxBitsPerChar16 = 128;
-  static __kBitsPerCharTableShift = 5;
-  static __kBitsPerCharTableMultiplier = 1 << JSBI.__kBitsPerCharTableShift;
 }
 
 export default JSBI;
