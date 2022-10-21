@@ -41,15 +41,6 @@ class JSBI extends Array {
         throw new SyntaxError('Cannot convert ' + arg + ' to a BigInt');
       }
       return result;
-    } else if (typeof arg === 'boolean') {
-      if (arg === true) {
-        return JSBI.__oneDigit(1, false);
-      }
-      return JSBI.__zero();
-    } else if (typeof arg === 'object') {
-      if (arg.constructor === JSBI) return arg;
-      const primitive = JSBI.__toPrimitive(arg);
-      return JSBI.BigInt(primitive);
     }
     throw new TypeError('Cannot convert ' + arg + ' to a BigInt');
   }
@@ -63,58 +54,7 @@ class JSBI extends Array {
       const value = x.__unsignedDigit(0);
       return x.sign ? -value : value;
     }
-    const xMsd = x.__digit(xLength - 1);
-    const msdLeadingZeros = JSBI.__clz30(xMsd);
-    const xBitLength = xLength * 30 - msdLeadingZeros;
-    if (xBitLength > 1024) return x.sign ? -Infinity : Infinity;
-    let exponent = xBitLength - 1;
-    let currentDigit = xMsd;
-    let digitIndex = xLength - 1;
-    const shift = msdLeadingZeros + 3;
-    let mantissaHigh = shift === 32 ? 0 : currentDigit << shift;
-    mantissaHigh >>>= 12;
-    const mantissaHighBitsUnset = shift - 12;
-    let mantissaLow = shift >= 12 ? 0 : currentDigit << (20 + shift);
-    let mantissaLowBitsUnset = 20 + shift;
-    if (mantissaHighBitsUnset > 0 && digitIndex > 0) {
-      digitIndex--;
-      currentDigit = x.__digit(digitIndex);
-      mantissaHigh |= currentDigit >>> (30 - mantissaHighBitsUnset);
-      mantissaLow = currentDigit << (mantissaHighBitsUnset + 2);
-      mantissaLowBitsUnset = mantissaHighBitsUnset + 2;
-    }
-    while (mantissaLowBitsUnset > 0 && digitIndex > 0) {
-      digitIndex--;
-      currentDigit = x.__digit(digitIndex);
-      if (mantissaLowBitsUnset >= 30) {
-        mantissaLow |= currentDigit << (mantissaLowBitsUnset - 30);
-      } else {
-        mantissaLow |= currentDigit >>> (30 - mantissaLowBitsUnset);
-      }
-      mantissaLowBitsUnset -= 30;
-    }
-    const rounding = JSBI.__decideRounding(x, mantissaLowBitsUnset, digitIndex, currentDigit);
-    if (rounding === 1 || (rounding === 0 && (mantissaLow & 1) === 1)) {
-      mantissaLow = (mantissaLow + 1) >>> 0;
-      if (mantissaLow === 0) {
-        // Incrementing mantissaLow overflowed.
-        mantissaHigh++;
-        if (mantissaHigh >>> 20 !== 0) {
-          // Incrementing mantissaHigh overflowed.
-          mantissaHigh = 0;
-          exponent++;
-          if (exponent > 1023) {
-            // Incrementing the exponent overflowed.
-            return x.sign ? -Infinity : Infinity;
-          }
-        }
-      }
-    }
-    const signBit = x.sign ? 1 << 31 : 0;
-    exponent = (exponent + 0x3ff) << 20;
-    JSBI.__kBitConversionInts[1] = signBit | exponent | mantissaHigh;
-    JSBI.__kBitConversionInts[0] = mantissaLow;
-    return JSBI.__kBitConversionDouble[0];
+    throw new TypeError('Cannot convert ' + x + ' to a Number');
   }
 
   // Operations.
@@ -492,111 +432,6 @@ class JSBI extends Array {
     }
   }
 
-  static __unequalSign(leftNegative: boolean): number {
-    return leftNegative ? -1 : 1;
-  }
-  static __absoluteGreater(bothNegative: boolean): number {
-    return bothNegative ? -1 : 1;
-  }
-  static __absoluteLess(bothNegative: boolean): number {
-    return bothNegative ? 1 : -1;
-  }
-
-  static __compareToDouble(x: JSBI, y: number): number {
-    if (y !== y) return y; // NaN.
-    if (y === Infinity) return -1;
-    if (y === -Infinity) return 1;
-    const xSign = x.sign;
-    const ySign = y < 0;
-    if (xSign !== ySign) return JSBI.__unequalSign(xSign);
-    if (y === 0) {
-      throw new Error('implementation bug: should be handled elsewhere');
-    }
-    if (x.length === 0) return -1;
-    JSBI.__kBitConversionDouble[0] = y;
-    const rawExponent = (JSBI.__kBitConversionInts[1] >>> 20) & 0x7ff;
-    if (rawExponent === 0x7ff) {
-      throw new Error('implementation bug: handled elsewhere');
-    }
-    const exponent = rawExponent - 0x3ff;
-    if (exponent < 0) {
-      // The absolute value of y is less than 1. Only 0n has an absolute
-      // value smaller than that, but we've already covered that case.
-      return JSBI.__absoluteGreater(xSign);
-    }
-    const xLength = x.length;
-    let xMsd = x.__digit(xLength - 1);
-    const msdLeadingZeros = JSBI.__clz30(xMsd);
-    const xBitLength = xLength * 30 - msdLeadingZeros;
-    const yBitLength = exponent + 1;
-    if (xBitLength < yBitLength) return JSBI.__absoluteLess(xSign);
-    if (xBitLength > yBitLength) return JSBI.__absoluteGreater(xSign);
-    // Same sign, same bit length. Shift mantissa to align with x and compare
-    // bit for bit.
-    const kHiddenBit = 0x00100000;
-    let mantissaHigh = (JSBI.__kBitConversionInts[1] & 0xfffff) | kHiddenBit;
-    let mantissaLow = JSBI.__kBitConversionInts[0];
-    const kMantissaHighTopBit = 20;
-    const msdTopBit = 29 - msdLeadingZeros;
-    if (msdTopBit !== ((xBitLength - 1) % 30 | 0)) {
-      throw new Error('implementation bug');
-    }
-    let compareMantissa; // Shifted chunk of mantissa.
-    let remainingMantissaBits = 0;
-    // First, compare most significant digit against beginning of mantissa.
-    if (msdTopBit < kMantissaHighTopBit) {
-      const shift = kMantissaHighTopBit - msdTopBit;
-      remainingMantissaBits = shift + 32;
-      compareMantissa = mantissaHigh >>> shift;
-      mantissaHigh = (mantissaHigh << (32 - shift)) | (mantissaLow >>> shift);
-      mantissaLow = mantissaLow << (32 - shift);
-    } else if (msdTopBit === kMantissaHighTopBit) {
-      remainingMantissaBits = 32;
-      compareMantissa = mantissaHigh;
-      mantissaHigh = mantissaLow;
-      mantissaLow = 0;
-    } else {
-      const shift = msdTopBit - kMantissaHighTopBit;
-      remainingMantissaBits = 32 - shift;
-      compareMantissa = (mantissaHigh << shift) | (mantissaLow >>> (32 - shift));
-      mantissaHigh = mantissaLow << shift;
-      mantissaLow = 0;
-    }
-    xMsd = xMsd >>> 0;
-    compareMantissa = compareMantissa >>> 0;
-    if (xMsd > compareMantissa) return JSBI.__absoluteGreater(xSign);
-    if (xMsd < compareMantissa) return JSBI.__absoluteLess(xSign);
-    // Then, compare additional digits against remaining mantissa bits.
-    for (let digitIndex = xLength - 2; digitIndex >= 0; digitIndex--) {
-      if (remainingMantissaBits > 0) {
-        remainingMantissaBits -= 30;
-        compareMantissa = mantissaHigh >>> 2;
-        mantissaHigh = (mantissaHigh << 30) | (mantissaLow >>> 2);
-        mantissaLow = mantissaLow << 30;
-      } else {
-        compareMantissa = 0;
-      }
-      const digit = x.__unsignedDigit(digitIndex);
-      if (digit > compareMantissa) return JSBI.__absoluteGreater(xSign);
-      if (digit < compareMantissa) return JSBI.__absoluteLess(xSign);
-    }
-    // Integer parts are equal; check whether {y} has a fractional part.
-    if (mantissaHigh !== 0 || mantissaLow !== 0) {
-      if (remainingMantissaBits === 0) throw new Error('implementation bug');
-      return JSBI.__absoluteLess(xSign);
-    }
-    return 0;
-  }
-
-  static __equalToNumber(x: JSBI, y: number) {
-    if (JSBI.__isOneDigitInt(y)) {
-      if (y === 0) return x.length === 0;
-      // Any multi-digit BigInt is bigger than an int32.
-      return x.length === 1 && x.sign === y < 0 && x.__unsignedDigit(0) === Math.abs(y);
-    }
-    return JSBI.__compareToDouble(x, y) === 0;
-  }
-
   __clzmsd(): number {
     return JSBI.__clz30(this.__digit(this.length - 1));
   }
@@ -635,28 +470,6 @@ class JSBI extends Array {
     while (i >= 0 && x.__digit(i) === y.__digit(i)) i--;
     if (i < 0) return 0;
     return x.__unsignedDigit(i) > y.__unsignedDigit(i) ? 1 : -1;
-  }
-
-  static __internalMultiplyAdd(source: JSBI, factor: number, summand: number, n: number, result: JSBI): void {
-    let carry = summand;
-    let high = 0;
-    for (let i = 0; i < n; i++) {
-      const digit = source.__digit(i);
-      const rx = JSBI.__imul(digit & 0x7fff, factor);
-      const ry = JSBI.__imul(digit >>> 15, factor);
-      const r = rx + ((ry & 0x7fff) << 15) + high + carry;
-      carry = r >>> 30;
-      high = ry >>> 15;
-      result.__setDigit(i, r & 0x3fffffff);
-    }
-    if (result.length > n) {
-      result.__setDigit(n++, carry + high);
-      while (n < result.length) {
-        result.__setDigit(n++, 0);
-      }
-    } else {
-      if (carry + high !== 0) throw new Error('implementation bug');
-    }
   }
 
   __inplaceMultiplyAdd(multiplier: number, summand: number, length: number): void {
@@ -708,10 +521,6 @@ class JSBI extends Array {
       remainder = input % divisor | 0;
     }
     return remainder;
-  }
-
-  static __clz15(value: number): number {
-    return JSBI.__clz30(value) - 15;
   }
 
   static __toPrimitive(obj: any, hint = 'default'): any {
